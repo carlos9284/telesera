@@ -20,6 +20,14 @@
       return undefined;
     };
   }
+  // String.prototype.includes was introduced after the Chromium 38 build on LG webOS 3.x.
+  // Chat title filtering uses it in ui/app.js.
+  if (!String.prototype.includes) {
+    String.prototype.includes = function (search, start) {
+      if (search instanceof RegExp) throw new TypeError('First argument must not be a RegExp');
+      return String(this).indexOf(String(search), start || 0) !== -1;
+    };
+  }
   if (!Array.prototype.includes) {
     Array.prototype.includes = function (item, start) {
       for (var i = start || 0; i < this.length; i++) {
