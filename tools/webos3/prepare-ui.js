@@ -36,6 +36,13 @@ function transpile(file) {
 });
 ['app.js','i18n.js'].forEach(function (file) { transpile(path.join(dest,'ui',file)); });
 transpile(path.join(dest,'webos','launch.js'));
+change(path.join(dest, 'ui', 'app.js'), function (js) {
+  var marker = 'var key = event.key, editing =';
+  if (js.indexOf(marker) < 0) throw new Error('Expected keyboard handler not found');
+  return js.replace(marker, "var key = (event.key && event.key !== 'Unidentified') ? event.key : ({37:'ArrowLeft',38:'ArrowUp',39:'ArrowRight',40:'ArrowDown',13:'Enter',27:'Escape',9:'Tab',32:' '})[event.keyCode], editing =")
+    .replace('candidate.focus({ preventScroll: true });', 'candidate.focus();')
+    .replace("candidate.scrollIntoView({ block: 'nearest', inline: 'nearest' });", 'candidate.scrollIntoView(false);');
+});
 fs.copyFileSync(path.join(dest,'ui','i18n.js'), path.join(dest,'webos','i18n.js'));
 change(path.join(dest,'ui','index.html'), function (html) {
   return html.replace('<script src="i18n.js"></script>', '<script src="compat-webos3.js"></script>\n<script src="i18n.js"></script>');
