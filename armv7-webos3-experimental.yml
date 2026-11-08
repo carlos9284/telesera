@@ -1,0 +1,37 @@
+name: Build Telesera webOS 3 ARMv7 (experimental)
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.99.1
+        with:
+          targets: armv7-unknown-linux-musleabihf
+      - name: Install cross
+        run: cargo install cross --locked --version 0.2.5
+      - name: Compile engine for ARMv7 musl (static candidate)
+        run: cross build --manifest-path engine/Cargo.toml --release --locked --target armv7-unknown-linux-musleabihf
+      - name: Generate older browser files
+        run: |
+          npm install --no-save --prefix tools/webos3 typescript@5.9.3
+          node tools/webos3/prepare-ui.js
+      - name: Check generated files
+        run: |
+          node --check dist/webos3/ui/app.js
+          node --check dist/webos3/ui/i18n.js
+          node --check dist/webos3/webos/launch.js
+          node --check dist/webos3/ui/compat-webos3.js
+          python3 tools/webos3/check-elf.py engine/target/armv7-unknown-linux-musleabihf/release/telesera-engine
+      - name: Collect artifact
+        run: |
+          cp engine/target/armv7-unknown-linux-musleabihf/release/telesera-engine dist/webos3/telesera-engine
+          cd dist/webos3
+          tar -czf ../telesera-webos3-armv7-candidate.tar.gz ui webos telesera-engine
+      - uses: actions/upload-artifact@v4
+        with:
+          name: telesera-webos3-armv7-candidate
+          path: dist/telesera-webos3-armv7-candidate.tar.gz

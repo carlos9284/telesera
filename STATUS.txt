@@ -1,0 +1,8 @@
+Checked source: risingsunhq/telesera main, Nov 8 2026.
+Engine Cargo.toml: edition 2024, app version 1.1.3.
+Original build: aarch64-unknown-linux-musl only.
+Original installer rejects uname -m != aarch64.
+Original UI has 13 async functions, fetch, AbortController, URLSearchParams.
+The Chromium 38 adaptation is experimental and has not run on the TV.
+No ARMv7 binary has been compiled in this session.
+Test first with the usage-only engine command; do not install production IPK.

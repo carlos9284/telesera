@@ -1,0 +1,25 @@
+/* Fallbacks for Chromium 38 (no CSS Grid, CSS variables or flex gap). */
+:root { color:#e7edf8; background:#10192b; }
+.clock,.list-empty,.login-intro,.connection-screen p { color:#a0aec5; }
+.sticker-overlay { top:0; right:0; bottom:0; left:0; }
+.sticker-panel { width:620px; max-width:100%; }
+.sticker-grid {
+  display:flex;
+  flex-direction:row;
+  flex-wrap:wrap;
+  align-content:flex-start;
+}
+.sticker-grid.pack-list { display:block; }
+.sticker-choice {
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:calc(25% - 12px);
+  margin:5px;
+  color:#e7edf8;
+}
+.sticker-grid.pack-list .sticker-choice { width:auto; }
+.message-sticker { display:flex; align-items:center; justify-content:center; }
+.sticker-pack { color:#e7edf8; }
+.sticker-pack span { color:#a0aec5; }
+.sticker-grid .list-empty,.sticker-grid .load-older { width:100%; }
