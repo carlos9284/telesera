@@ -1,5 +1,5 @@
-mod media;
 mod live;
+mod media;
 mod network;
 mod session;
 mod stickers;
