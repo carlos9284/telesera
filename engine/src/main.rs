@@ -1,3 +1,4 @@
+mod live;
 mod media;
 mod network;
 mod session;
@@ -139,6 +140,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/chats", get(telegram::chats))
         .route("/api/chats/resolve", get(telegram::resolve))
         .route("/api/chats/{id}/messages", get(telegram::messages))
+        .route("/api/chats/{id}/live", get(live::status))
         .route("/api/chats/{id}/send", post(telegram::send))
         .route("/api/chats/{id}/photo", get(media::photo))
         .route(
