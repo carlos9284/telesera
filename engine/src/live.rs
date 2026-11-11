@@ -5,20 +5,17 @@ use axum::extract::Path;
 
 pub async fn status(State(app): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let peer = telegram::peer(&app, &id).await?;
-    let Peer::Channel(channel) = peer else {
+    let Peer::Channel(_) = peer else {
         return Ok(Json(json!({"status":"unsupported"})));
     };
-    let reference = channel
-        .to_ref()
-        .await
-        .ok_or_else(|| missing("Canal sin referencia utilizable"))?;
+    let reference = telegram::peer_ref(&app, &id).await?;
     let full = app
         .client
         .invoke(&tl::functions::channels::GetFullChannel {
             channel: reference.into(),
         })
         .await?;
-    let tl::enums::channels::ChatFull::Full(full) = full;
+    let tl::enums::messages::ChatFull::Full(full) = full;
     let tl::enums::ChatFull::ChannelFull(details) = full.full_chat else {
         return Ok(Json(json!({"status":"unsupported"})));
     };
