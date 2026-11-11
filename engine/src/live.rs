@@ -3,10 +3,7 @@
 use crate::*;
 use axum::extract::Path;
 
-pub async fn status(
-    State(app): State<Shared>,
-    Path(id): Path<String>,
-) -> ApiResult<Json<Value>> {
+pub async fn status(State(app): State<Shared>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let peer = telegram::peer(&app, &id).await?;
     let Peer::Channel(channel) = peer else {
         return Ok(Json(json!({"status":"unsupported"})));
@@ -37,7 +34,11 @@ pub async fn status(
     let tl::enums::phone::GroupCall::Call(group) = group;
     let result = match group.call {
         tl::enums::GroupCall::Call(info) => {
-            let status = if info.schedule_date.is_some() { "scheduled" } else { "live" };
+            let status = if info.schedule_date.is_some() {
+                "scheduled"
+            } else {
+                "live"
+            };
             json!({
                 "status":status,
                 "participants":info.participants_count,
