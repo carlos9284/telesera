@@ -1,6 +1,6 @@
 //! Experimental on-demand HLS access for RTMP Telegram livestreams.
-//! Produces MPEG-TS from the self-contained 1-second MP4 pieces; never transcodes.
-//! Player fetches a short sliding playlist and sequential TS segments.
+//! Groups self-contained 1-second MP4 pieces into longer MPEG-TS HLS segments.
+//! Uses a small sliding playlist and does not transcode.
 //! Every media URL is authorized with the same local bearer token.
 use crate::*;
 use axum::extract::Path;
@@ -9,12 +9,15 @@ use std::sync::OnceLock;
 
 const MAX_SEGMENTS: usize = 12;
 const MAX_BYTES: usize = 24 * 1024 * 1024;
-const WINDOW: usize = 5;
+const WINDOW: usize = 3;
+const PART_MS: i64 = 1000;
+const SEGMENT_MS: i64 = 3000;
 
 struct Cache {
     pieces: HashMap<(String, i64), Vec<u8>>,
     order: std::collections::VecDeque<(String, i64)>,
     size: usize,
+    continuation: HashMap<String, (i64, crate::hls_ts::Continuity)>,
 }
 impl Cache {
     fn new() -> Self {
@@ -22,6 +25,7 @@ impl Cache {
             pieces: HashMap::new(),
             order: std::collections::VecDeque::new(),
             size: 0,
+            continuation: HashMap::new(),
         }
     }
     fn get(&self, id: &str, time: i64) -> Option<Vec<u8>> {
@@ -45,6 +49,10 @@ impl Cache {
     }
 }
 static CACHE: OnceLock<tokio::sync::Mutex<Cache>> = OnceLock::new();
+static BUILD_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+fn build_lock() -> &'static tokio::sync::Mutex<()> {
+    BUILD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
 static JOINED: OnceLock<tokio::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
 fn joined() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
     JOINED.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashSet::new()))
@@ -122,19 +130,20 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
             (ch.channel == 1).then_some(ch.last_timestamp_ms)
         })
         .ok_or_else(|| bad("unified channel not found"))?;
-    // Play 3 seconds behind latest availability; never advertise future chunks.
-    let newest = selected.div_euclid(1000) * 1000 - 3000;
-    if newest <= (WINDOW as i64) * 1000 {
+    // Advertise only complete 3-second segments that are safely behind live.
+    // Keep the advertised window inside Telegram's short media retention buffer.
+    let newest = (selected - 4000).div_euclid(SEGMENT_MS) * SEGMENT_MS;
+    if newest <= (WINDOW as i64) * SEGMENT_MS {
         return Err(bad("live buffer not ready"));
     }
-    let oldest = newest - (WINDOW as i64 - 1) * 1000;
+    let oldest = newest - (WINDOW as i64 - 1) * SEGMENT_MS;
     let token = &app.config.token;
     let mut body = format!(
-        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:{}\n",
-        oldest / 1000
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:{}\n",
+        oldest / SEGMENT_MS
     );
-    for ts in (oldest..=newest).step_by(1000) {
-        body.push_str(&format!("#EXTINF:1.000,\nsegment/{ts}?token={token}\n"));
+    for ts in (oldest..=newest).step_by(SEGMENT_MS as usize) {
+        body.push_str(&format!("#EXTINF:3.000,\nsegment/{ts}?token={token}\n"));
     }
     Ok((
         [
@@ -157,9 +166,12 @@ pub async fn segment(
     Path((id, time)): Path<(String, String)>,
 ) -> ApiResult<Response> {
     let timestamp: i64 = time.parse().map_err(|_| bad("invalid HLS timestamp"))?;
-    if timestamp <= 0 || timestamp % 1000 != 0 {
+    if timestamp <= 0 || timestamp % SEGMENT_MS != 0 {
         return Err(bad("invalid segment timestamp"));
     }
+    // Serialize just the on-demand HLS builder: browsers may fetch segments
+    // concurrently but the TS continuity counters must follow request order.
+    let _build_guard = build_lock().lock().await;
     // Explicitly bounded memory and no persistent cache.
     if let Some(data) = cache().lock().await.get(&id, timestamp) {
         return Ok(([(header::CONTENT_TYPE, "video/mp2t")], data).into_response());
@@ -181,40 +193,52 @@ pub async fn segment(
             (ch.channel == 1).then_some(ch.last_timestamp_ms)
         })
         .ok_or_else(|| bad("stream channel unavailable"))?;
-    if timestamp > latest || timestamp < latest - 15_000 {
+    if timestamp + SEGMENT_MS > latest || timestamp < latest - 30_000 {
         return Err(bad("segment is outside the live window"));
     }
-    let call_for_retry = call.clone();
-    let request = tl::functions::upload::GetFile {
-        precise: false,
-        cdn_supported: false,
-        location: tl::enums::InputFileLocation::InputGroupCallStream(
-            tl::types::InputGroupCallStream {
-                call,
-                time_ms: timestamp,
-                scale: 0,
-                video_channel: Some(1),
-                video_quality: Some(2),
-            },
-        ),
-        offset: 0,
-        limit: 1024 * 1024,
-    };
-    let response = match app.pool.invoke_in_dc(dc, &request).await {
-        Ok(file) => file,
-        Err(error) if error.to_string().contains("GROUPCALL_JOIN_MISSING") => {
-            joined().lock().await.remove(&id);
-            ensure_join(&app, &id, call_for_retry).await?;
-            app.pool.invoke_in_dc(dc, &request).await?
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let tl::enums::upload::File::File(file) = response else {
-        return Err(bad("unexpected Telegram stream response"));
-    };
-    let mp4 = crate::stream_part::extract_single_mp4(&file.bytes).map_err(bad)?;
-    let data =
-        crate::hls_ts::remux(mp4, timestamp, &mut crate::hls_ts::Continuity::new()).map_err(bad)?;
-    cache().lock().await.put(id, timestamp, data.clone());
+    let mut continuity = cache()
+        .lock()
+        .await
+        .continuation
+        .get(&id)
+        .and_then(|(next, state)| (*next == timestamp).then(|| state.clone()))
+        .unwrap_or_else(crate::hls_ts::Continuity::new);
+    let mut data = Vec::new();
+    for index in 0..(SEGMENT_MS / PART_MS) {
+        let part_time = timestamp + index * PART_MS;
+        let request = tl::functions::upload::GetFile {
+            precise: false,
+            cdn_supported: false,
+            location: tl::enums::InputFileLocation::InputGroupCallStream(
+                tl::types::InputGroupCallStream {
+                    call: call.clone(),
+                    time_ms: part_time,
+                    scale: 0,
+                    video_channel: Some(1),
+                    video_quality: Some(2),
+                },
+            ),
+            offset: 0,
+            limit: 1024 * 1024,
+        };
+        let response = match app.pool.invoke_in_dc(dc, &request).await {
+            Ok(file) => file,
+            Err(error) if error.to_string().contains("GROUPCALL_JOIN_MISSING") => {
+                joined().lock().await.remove(&id);
+                ensure_join(&app, &id, call.clone()).await?;
+                app.pool.invoke_in_dc(dc, &request).await?
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let tl::enums::upload::File::File(file) = response else {
+            return Err(bad("unexpected Telegram stream response"));
+        };
+        let mp4 = crate::stream_part::extract_single_mp4(&file.bytes).map_err(bad)?;
+        let piece = crate::hls_ts::remux(mp4, part_time, &mut continuity).map_err(bad)?;
+        data.extend_from_slice(&piece);
+    }
+    let mut guard = cache().lock().await;
+    guard.continuation.insert(id.clone(), (timestamp + SEGMENT_MS, continuity));
+    guard.put(id, timestamp, data.clone());
     Ok(([(header::CONTENT_TYPE, "video/mp2t")], data).into_response())
 }
