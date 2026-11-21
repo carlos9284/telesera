@@ -238,7 +238,9 @@ pub async fn segment(
         data.extend_from_slice(&piece);
     }
     let mut guard = cache().lock().await;
-    guard.continuation.insert(id.clone(), (timestamp + SEGMENT_MS, continuity));
+    guard
+        .continuation
+        .insert(id.clone(), (timestamp + SEGMENT_MS, continuity));
     guard.put(id, timestamp, data.clone());
     Ok(([(header::CONTENT_TYPE, "video/mp2t")], data).into_response())
 }
