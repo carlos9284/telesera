@@ -70,10 +70,13 @@ pub async fn probe(State(app): State<Shared>, Path(id): Path<String>) -> ApiResu
     let Some(call) = details.call else {
         return Ok(Json(json!({"status":"none"})));
     };
-    let group = app.client.invoke(&tl::functions::phone::GetGroupCall {
-        call: call.clone(),
-        limit: 0,
-    }).await?;
+    let group = app
+        .client
+        .invoke(&tl::functions::phone::GetGroupCall {
+            call: call.clone(),
+            limit: 0,
+        })
+        .await?;
     let tl::enums::phone::GroupCall::Call(group) = group;
     let tl::enums::GroupCall::Call(info) = group.call else {
         return Ok(Json(json!({"status":"ended"})));
