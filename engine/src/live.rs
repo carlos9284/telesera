@@ -242,13 +242,9 @@ pub async fn segment_probe(
     }
 }
 
-
 /// Download one explicitly requested live segment as an ordinary MP4
 /// diagnostic response. No recording or continuous playback is started.
-pub async fn mp4_sample(
-    State(app): State<Shared>,
-    Path(id): Path<String>,
-) -> ApiResult<Response> {
+pub async fn mp4_sample(State(app): State<Shared>, Path(id): Path<String>) -> ApiResult<Response> {
     let peer = telegram::peer(&app, &id).await?;
     let Peer::Channel(_) = peer else {
         return Err(bad("live sample requires a channel"));
@@ -286,9 +282,7 @@ pub async fn mp4_sample(
         .pool
         .invoke_in_dc(
             dc,
-            &tl::functions::phone::GetGroupCallStreamChannels {
-                call: call.clone(),
-            },
+            &tl::functions::phone::GetGroupCallStreamChannels { call: call.clone() },
         )
         .await?;
     let tl::enums::phone::GroupCallStreamChannels::Channels(stream) = stream;
