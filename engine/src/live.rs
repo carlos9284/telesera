@@ -213,6 +213,7 @@ pub async fn segment_probe(
         Ok(tl::enums::upload::File::File(file)) => {
             let bytes = &file.bytes;
             let head = &bytes[..bytes.len().min(16)];
+            let parsed = crate::stream_part::inspect(bytes).unwrap_or_else(|error| json!({ "parse_error":error }));
             Ok(Json(json!({
                 "status":"segment_received",
                 "media_dc_id":dc,
@@ -221,6 +222,7 @@ pub async fn segment_probe(
                 "quality":quality,
                 "bytes":bytes.len(),
                 "first_16_hex":hex::encode(head),
+                "media":parsed,
                 "channels":channels
             })))
         }
