@@ -197,15 +197,13 @@ pub async fn segment_probe(
     let request = tl::functions::upload::GetFile {
         precise: false,
         cdn_supported: false,
-        location: tl::enums::InputFileLocation::GroupCallStream(
-            tl::types::InputGroupCallStream {
-                call,
-                time_ms: timestamp,
-                scale: 0,
-                video_channel: Some(1),
-                video_quality: Some(quality),
-            },
-        ),
+        location: tl::enums::InputFileLocation::InputGroupCallStream(tl::types::InputGroupCallStream {
+            call,
+            time_ms: timestamp,
+            scale: 0,
+            video_channel: Some(1),
+            video_quality: Some(quality),
+        }),
         offset: 0,
         limit: 1024 * 1024,
     };
