@@ -36,10 +36,10 @@ impl Cache {
         self.order.push_back(key.clone());
         self.pieces.insert(key, bytes);
         while self.order.len() > MAX_SEGMENTS || self.size > MAX_BYTES {
-            if let Some(key) = self.order.pop_front() {
-                if let Some(bytes) = self.pieces.remove(&key) {
-                    self.size -= bytes.len();
-                }
+            if let Some(key) = self.order.pop_front()
+                && let Some(bytes) = self.pieces.remove(&key)
+            {
+                self.size -= bytes.len();
             }
         }
     }
