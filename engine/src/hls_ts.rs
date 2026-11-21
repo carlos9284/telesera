@@ -453,6 +453,7 @@ fn pes(
     stream.extend_from_slice(data);
     packets(out, cc, pid, &stream, if pcr { Some(dts) } else { None });
 }
+#[derive(Clone)]
 pub struct Continuity {
     cc: [u8; 4],
 }
