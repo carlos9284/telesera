@@ -1,7 +1,7 @@
 name: Build Telesera webOS 3 ARMv7 (experimental)
 on:
   push:
-    branches: [feature/live-detection-webos3]
+    branches: [feature/live-detection-webos3, feature/live-rtmp-probe-webos3]
   workflow_dispatch:
 permissions:
   contents: read
