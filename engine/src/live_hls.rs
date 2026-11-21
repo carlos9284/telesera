@@ -45,6 +45,27 @@ impl Cache {
     }
 }
 static CACHE: OnceLock<tokio::sync::Mutex<Cache>> = OnceLock::new();
+static JOINED: OnceLock<tokio::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+fn joined() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
+    JOINED.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Only one join per channel and engine instance. A request failing with
+/// GROUPCALL_JOIN_MISSING explicitly invalidates this optimistic state.
+async fn ensure_join(
+    app: &Shared,
+    id: &str,
+    call: tl::enums::InputGroupCall,
+) -> ApiResult<()> {
+    let mut guard = joined().lock().await;
+    if guard.contains(id) {
+        return Ok(());
+    }
+    crate::live_join::join_spectator(app, call).await?;
+    guard.insert(id.to_owned());
+    Ok(())
+}
+
 fn cache() -> &'static tokio::sync::Mutex<Cache> {
     CACHE.get_or_init(|| tokio::sync::Mutex::new(Cache::new()))
 }
@@ -88,6 +109,7 @@ async fn source(app: &Shared, id: &str) -> ApiResult<(tl::enums::InputGroupCall,
 
 pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiResult<Response> {
     let (call, dc) = source(&app, &id).await?;
+    ensure_join(&app, &id, call.clone()).await?;
     let stream = app
         .pool
         .invoke_in_dc(
@@ -166,6 +188,7 @@ pub async fn segment(
     if timestamp > latest || timestamp < latest - 15_000 {
         return Err(bad("segment is outside the live window"));
     }
+    let call_for_retry = call.clone();
     let request = tl::functions::upload::GetFile {
         precise: false,
         cdn_supported: false,
@@ -181,7 +204,15 @@ pub async fn segment(
         offset: 0,
         limit: 1024 * 1024,
     };
-    let response = app.pool.invoke_in_dc(dc, &request).await?;
+    let response = match app.pool.invoke_in_dc(dc, &request).await {
+        Ok(file) => file,
+        Err(error) if error.to_string().contains("GROUPCALL_JOIN_MISSING") => {
+            joined().lock().await.remove(&id);
+            ensure_join(&app, &id, call_for_retry).await?;
+            app.pool.invoke_in_dc(dc, &request).await?
+        }
+        Err(error) => return Err(error.into()),
+    };
     let tl::enums::upload::File::File(file) = response else {
         return Err(bad("unexpected Telegram stream response"));
     };
