@@ -153,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
         )
         .route("/api/chats/{id}/live/mp4-sample", post(live::mp4_sample))
         .route("/api/chats/{id}/live/hls/index.m3u8", get(live_hls::playlist))
-        .route("/api/chats/{id}/live/hls/{time}.ts", get(live_hls::segment))
+        .route("/api/chats/{id}/live/hls/segment/{time}", get(live_hls::segment))
         .route("/api/chats/{id}/send", post(telegram::send))
         .route("/api/chats/{id}/photo", get(media::photo))
         .route(
