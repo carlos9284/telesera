@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 
 const MAX_SEGMENTS: usize = 12;
 const MAX_BYTES: usize = 24 * 1024 * 1024;
-const WINDOW: usize = 3;
+const WINDOW: usize = 5;
 const PART_MS: i64 = 1000;
 const SEGMENT_MS: i64 = 3000;
 
@@ -133,10 +133,14 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
     // Advertise only complete 3-second segments that are safely behind live.
     // Keep the advertised window inside Telegram's short media retention buffer.
     let newest = (selected - 4000).div_euclid(SEGMENT_MS) * SEGMENT_MS;
-    if newest <= (WINDOW as i64) * SEGMENT_MS {
+    if newest < (WINDOW as i64 - 1) * SEGMENT_MS {
         return Err(bad("live buffer not ready"));
     }
     let oldest = newest - (WINDOW as i64 - 1) * SEGMENT_MS;
+    eprintln!(
+        "HLS playlist chat={} latest={} oldest={} newest={} window={}",
+        id, selected, oldest, newest, WINDOW
+    );
     let token = &app.config.token;
     let mut body = format!(
         "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:{}\n",
