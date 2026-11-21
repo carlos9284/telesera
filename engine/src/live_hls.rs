@@ -7,7 +7,7 @@ use axum::extract::Path;
 use axum::http::HeaderValue;
 use std::sync::OnceLock;
 
-const MAX_SEGMENTS: usize = 12;
+const MAX_SEGMENTS: usize = 24;
 const MAX_BYTES: usize = 24 * 1024 * 1024;
 const WINDOW: usize = 5;
 const PART_MS: i64 = 1000;
@@ -149,6 +149,26 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
     for ts in (oldest..=newest).step_by(SEGMENT_MS as usize) {
         body.push_str(&format!("#EXTINF:3.000,\nsegment/{ts}?token={token}\n"));
     }
+    // LG webOS sometimes requests the oldest advertised pieces 30+ seconds
+    // later. Save the at-risk segments while Telegram still has them.
+    // This runs after preparing the playlist and never holds up its response.
+    let prefetch_app = app.clone();
+    let prefetch_id = id.clone();
+    tokio::spawn(async move {
+        for ts in [oldest, oldest + SEGMENT_MS] {
+            if cache().lock().await.get(&prefetch_id, ts).is_some() {
+                continue;
+            }
+            let result = segment(
+                State(prefetch_app.clone()),
+                Path((prefetch_id.clone(), ts.to_string())),
+            )
+            .await;
+            if result.is_err() {
+                eprintln!("HLS prefetch failed chat={} time_ms={}", prefetch_id, ts);
+            }
+        }
+    });
     Ok((
         [
             (
@@ -220,6 +240,7 @@ pub async fn segment(
     let _build_guard = build_lock().lock().await;
     // Explicitly bounded memory and no persistent cache.
     if let Some(data) = cache().lock().await.get(&id, timestamp) {
+        eprintln!("HLS cache hit chat={} time_ms={}", id, timestamp);
         return Ok(([(header::CONTENT_TYPE, "video/mp2t")], data).into_response());
     }
     let (call, dc) = source(&app, &id).await?;
