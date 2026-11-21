@@ -121,7 +121,7 @@
   function selectArchive(archived) { state.archived = archived; $('inbox-tab').classList.toggle('selected', !archived); $('archive-tab').classList.toggle('selected', archived); $('inbox-tab').setAttribute('aria-pressed', String(!archived)); $('archive-tab').setAttribute('aria-pressed', String(archived)); renderChats(); }
   async function openChat(chat) {
     closeStickers(false); state.chat = chat; state.messages = []; state.hasMore = false; chatRequest++; state.loading = false;
-    $('app').classList.add('chat-open'); show($('welcome'), false); show($('conversation-head'), true); show($('message-list'), true); show($('composer'), true); show($('chat-error'), false); $('message-list').textContent = ''; $('message-list').appendChild(el('p', 'list-empty', t("Loading…"))); $('chat-title').textContent = normalize(chat.title); $('chat-kind').textContent = { bot: t("Bot"), user: t("Conversation"), group: t("Group"), channel: t("Channel"), saved: t("Saved Messages") }[chat.kind] || t("Conversation"); $('chat-avatar').textContent = ''; $('chat-avatar').appendChild(avatar(chat)); show($('bot-app'), chat.kind === 'bot' && Boolean(chat.username)); show($('live-check'), chat.kind === 'channel'); $('message-input').value = ''; renderChats(); await loadMessages(false, true);
+    $('app').classList.add('chat-open'); show($('welcome'), false); show($('conversation-head'), true); show($('message-list'), true); show($('composer'), true); show($('chat-error'), false); $('message-list').textContent = ''; $('message-list').appendChild(el('p', 'list-empty', t("Loading…"))); $('chat-title').textContent = normalize(chat.title); $('chat-kind').textContent = { bot: t("Bot"), user: t("Conversation"), group: t("Group"), channel: t("Channel"), saved: t("Saved Messages") }[chat.kind] || t("Conversation"); $('chat-avatar').textContent = ''; $('chat-avatar').appendChild(avatar(chat)); show($('bot-app'), chat.kind === 'bot' && Boolean(chat.username)); show($('live-check'), chat.kind === 'channel'); $('live-check').dataset.playable = ''; $('live-check').textContent = 'Comprobar directo'; $('message-input').value = ''; renderChats(); await loadMessages(false, true);
     if (state.chat && state.chat.id === chat.id) {
       var messages = $('message-list').querySelectorAll('.message'), last = messages[messages.length - 1];
       var actions = last ? visibleFocusable(last) : [];
@@ -140,8 +140,9 @@
         data.status === 'scheduled' ? 'Directo programado' :
         data.status === 'ended' ? 'Directo finalizado' :
         data.status === 'none' ? 'No hay directo activo' : 'No compatible';
-      button.textContent = label;
-      toast(label + (data.status === 'live' ? '. Reproducción todavía no implementada.' : ''));
+      button.dataset.playable = data.status === 'live' && data.rtmp_stream ? '1' : '';
+      button.textContent = button.dataset.playable === '1' ? 'Ver directo (experimental)' : label;
+      toast(button.dataset.playable === '1' ? 'Directo disponible. Pulsa de nuevo para intentar reproducirlo.' : label);
     } catch (error) {
       button.textContent = 'Error al consultar directo';
       toast(error.message);
@@ -280,6 +281,21 @@
   }
   async function resolveMiniapp(url) { try { var result = await api('/miniapp', { url: url }); openMiniapp(result.url); } catch (error) { toast(error.message); } }
   function saveResume() { if (state.videoKey && Number.isFinite($('video').currentTime)) { try { localStorage.setItem('telesera-resume-' + state.videoKey, String($('video').ended ? 0 : $('video').currentTime)); } catch (_) {} } }
+  function openLive() {
+    if (!state.chat || state.chat.kind !== 'channel') return;
+    state.returnFocus = document.activeElement;
+    state.videoKey = '';
+    state.lastProgress = 0;
+    state.lastTime = 0;
+    show($('player'), true);
+    show($('player-error'), false);
+    $('player-title').textContent = 'EN DIRECTO · ' + normalize(state.chat.title);
+    $('video').src = resource(chatPath(state.chat) + '/live/hls/index.m3u8');
+    $('video').load();
+    setFocus($('toggle-play'));
+    var playback = $('video').play();
+    if (playback) playback.catch(function () { toast('El directo HLS no ha podido iniciarse.'); });
+  }
   function openVideo(message, chat) {
     state.returnFocus = document.activeElement; state.videoKey = chat.id + '-' + message.id; state.lastProgress = 0; state.lastTime = 0; show($('player'), true); show($('player-error'), false); $('player-title').textContent = message.media.name || t("Video"); $('video').src = resource(mediaPath(chat, message) + '/media'); $('video').load(); setFocus($('toggle-play')); var promise = $('video').play(); if (promise) promise.catch(function () { updatePlay(); });
   }
@@ -344,7 +360,7 @@
   function updateClock() { var now = new Date(); $('clock').textContent = time(now); $('saver-clock').querySelector('time').textContent = time(now); $('saver-clock').querySelector('p').textContent = now.toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long' }); var playing = !$('player').hidden && !$('video').paused && Date.now() - state.lastProgress < 20000; if (playing || !$('miniapp').hidden) state.lastActivity = Date.now(); if (Date.now() - state.lastActivity >= 180000) show($('screensaver'), true); }
   $('sticker-button').onclick = openStickers; $('stickers-close').onclick = function () { closeStickers(); }; $('stickers-back').onclick = function () { stickers.request++; stickers.pack = null; renderStickers(); setFocus($('stickers-sets')); };
   ['recent', 'favorites', 'sets'].forEach(function (tab) { $('stickers-' + tab).onclick = function () { stickers.request++; stickers.tab = tab; stickers.pack = null; renderStickers(); }; });
-  $('live-check').onclick = checkLive;
+  $('live-check').onclick = function () { if ($('live-check').dataset.playable === '1') openLive(); else checkLive(); };
   $('retry-connection').onclick = connect; $('login-next').onclick = login; $('login-back').onclick = function () { state.authStep = 'phone'; renderLogin(); }; $('search').addEventListener('input', renderChats); $('inbox-tab').onclick = function () { selectArchive(false); }; $('archive-tab').onclick = function () { selectArchive(true); }; $('send-button').onclick = send; $('retry-chat').onclick = function () { loadMessages(); }; $('chat-back').onclick = function () { $('app').classList.remove('chat-open'); setFocus($('chat-list').querySelector('.selected')); }; $('bot-app').onclick = function () { if (state.chat && state.chat.username) resolveMiniapp('https://t.me/' + encodeURIComponent(state.chat.username) + '?startapp'); };
   $('about-button').onclick = function () { show($('about'), true); setFocus($('about-close')); }; $('about-close').onclick = function () { show($('about'), false); setFocus($('about-button')); };
   $('close-player').onclick = closeVideo; $('toggle-play').onclick = togglePlay; $('seek-back').onclick = function () { seek(-15); }; $('seek-forward').onclick = function () { seek(15); }; $('retry-video').onclick = function () { show($('player-error'), false); $('video').load(); var promise = $('video').play(); if (promise) promise.catch(updatePlay); }; $('video-progress').addEventListener('input', function () { if (Number.isFinite($('video').duration)) { $('video').currentTime = Number(this.value) / 1000 * $('video').duration; saveResume(); } });
