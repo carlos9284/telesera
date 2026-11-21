@@ -148,10 +148,6 @@ async fn main() -> anyhow::Result<()> {
             "/api/chats/{id}/live/segment-probe",
             post(live::segment_probe),
         )
-        .route(
-            "/api/chats/{id}/live/join-segment-probe",
-            post(live::join_segment_probe),
-        )
         .route("/api/chats/{id}/send", post(telegram::send))
         .route("/api/chats/{id}/photo", get(media::photo))
         .route(
