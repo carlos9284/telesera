@@ -161,7 +161,6 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
         .into_response())
 }
 
-
 async fn fetch_piece(
     app: &Shared,
     call: tl::enums::InputGroupCall,
