@@ -241,3 +241,88 @@ pub async fn segment_probe(
         }))),
     }
 }
+
+
+/// Download one explicitly requested live segment as an ordinary MP4
+/// diagnostic response. No recording or continuous playback is started.
+pub async fn mp4_sample(
+    State(app): State<Shared>,
+    Path(id): Path<String>,
+) -> ApiResult<Response> {
+    let peer = telegram::peer(&app, &id).await?;
+    let Peer::Channel(_) = peer else {
+        return Err(bad("live sample requires a channel"));
+    };
+    let reference = telegram::peer_ref(&app, &id).await?;
+    let full = app
+        .client
+        .invoke(&tl::functions::channels::GetFullChannel {
+            channel: reference.into(),
+        })
+        .await?;
+    let tl::enums::messages::ChatFull::Full(full) = full;
+    let tl::enums::ChatFull::ChannelFull(details) = full.full_chat else {
+        return Err(bad("unsupported chat type"));
+    };
+    let call = details.call.ok_or_else(|| bad("no active live stream"))?;
+    let group = app
+        .client
+        .invoke(&tl::functions::phone::GetGroupCall {
+            call: call.clone(),
+            limit: 0,
+        })
+        .await?;
+    let tl::enums::phone::GroupCall::Call(group) = group;
+    let tl::enums::GroupCall::Call(info) = group.call else {
+        return Err(bad("live stream has ended"));
+    };
+    if info.schedule_date.is_some() || !info.rtmp_stream {
+        return Err(bad("no active RTMP stream"));
+    }
+    let dc = info
+        .stream_dc_id
+        .ok_or_else(|| bad("stream media DC unavailable"))?;
+    let stream = app
+        .pool
+        .invoke_in_dc(
+            dc,
+            &tl::functions::phone::GetGroupCallStreamChannels {
+                call: call.clone(),
+            },
+        )
+        .await?;
+    let tl::enums::phone::GroupCallStreamChannels::Channels(stream) = stream;
+    let selected = stream
+        .channels
+        .iter()
+        .find_map(|item| {
+            let tl::enums::GroupCallStreamChannel::Channel(ch) = item;
+            (ch.channel == 1).then_some(ch.last_timestamp_ms)
+        })
+        .ok_or_else(|| bad("stream channel 1 unavailable"))?;
+    let timestamp = selected.div_euclid(1000) * 1000 - 2000;
+    if timestamp <= 0 {
+        return Err(bad("no media timestamp available"));
+    }
+    let request = tl::functions::upload::GetFile {
+        precise: false,
+        cdn_supported: false,
+        location: tl::enums::InputFileLocation::InputGroupCallStream(
+            tl::types::InputGroupCallStream {
+                call,
+                time_ms: timestamp,
+                scale: 0,
+                video_channel: Some(1),
+                video_quality: Some(2),
+            },
+        ),
+        offset: 0,
+        limit: 1024 * 1024,
+    };
+    let response = app.pool.invoke_in_dc(dc, &request).await?;
+    let tl::enums::upload::File::File(file) = response else {
+        return Err(bad("Telegram returned an unexpected file variant"));
+    };
+    let mp4 = crate::stream_part::extract_single_mp4(&file.bytes).map_err(bad)?;
+    Ok(([(header::CONTENT_TYPE, "video/mp4")], mp4.to_vec()).into_response())
+}
