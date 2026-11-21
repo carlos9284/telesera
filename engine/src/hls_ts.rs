@@ -470,10 +470,10 @@ pub fn remux(mp4: &[u8], segment_ms: i64, state: &mut Continuity) -> RemuxResult
     let moov = child(mp4, b"moov")?;
     let mut tracks = Vec::new();
     for (tag, bytes) in children(moov)? {
-        if tag == *b"trak" {
-            if let Some(track) = parse_track(mp4, bytes)? {
-                tracks.push(track);
-            }
+        if tag == *b"trak"
+            && let Some(track) = parse_track(mp4, bytes)?
+        {
+            tracks.push(track);
         }
     }
     if tracks.len() != 2 || tracks.iter().filter(|t| t.video).count() != 1 {
