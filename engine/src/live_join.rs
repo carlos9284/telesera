@@ -82,12 +82,8 @@ pub async fn join_probe(
     }
 }
 
-
 /// Join an RTMP stream using a receive-only group-call participant.
-pub async fn join_spectator(
-    app: &Shared,
-    call: tl::enums::InputGroupCall,
-) -> ApiResult<i32> {
+pub async fn join_spectator(app: &Shared, call: tl::enums::InputGroupCall) -> ApiResult<i32> {
     let (payload, ssrc) = viewer_params()?;
     app.client
         .invoke(&tl::functions::phone::JoinGroupCall {
