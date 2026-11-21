@@ -161,6 +161,36 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
         .into_response())
 }
 
+
+async fn fetch_piece(
+    app: &Shared,
+    call: tl::enums::InputGroupCall,
+    dc: i32,
+    part_time: i64,
+) -> ApiResult<Vec<u8>> {
+    let request = tl::functions::upload::GetFile {
+        precise: false,
+        cdn_supported: false,
+        location: tl::enums::InputFileLocation::InputGroupCallStream(
+            tl::types::InputGroupCallStream {
+                call,
+                time_ms: part_time,
+                scale: 0,
+                video_channel: Some(1),
+                video_quality: Some(2),
+            },
+        ),
+        offset: 0,
+        limit: 1024 * 1024,
+    };
+    let response = app.pool.invoke_in_dc(dc, &request).await?;
+    let tl::enums::upload::File::File(file) = response else {
+        return Err(bad("unexpected Telegram stream response"));
+    };
+    let mp4 = crate::stream_part::extract_single_mp4(&file.bytes).map_err(bad)?;
+    Ok(mp4.to_vec())
+}
+
 pub async fn segment(
     State(app): State<Shared>,
     Path((id, time)): Path<(String, String)>,
@@ -194,8 +224,32 @@ pub async fn segment(
         })
         .ok_or_else(|| bad("stream channel unavailable"))?;
     if timestamp + SEGMENT_MS > latest || timestamp < latest - 30_000 {
+        eprintln!(
+            "HLS rejected chat={} segment={} latest={} (outside live window)",
+            id, timestamp, latest
+        );
         return Err(bad("segment is outside the live window"));
     }
+    // Telegram exposes independent one-second MP4 fragments. Fetch all three
+    // concurrently to stay ahead of the LG player's three-second deadline.
+    let started = std::time::Instant::now();
+    let first = || {
+        tokio::try_join!(
+            fetch_piece(&app, call.clone(), dc, timestamp),
+            fetch_piece(&app, call.clone(), dc, timestamp + PART_MS),
+            fetch_piece(&app, call.clone(), dc, timestamp + 2 * PART_MS)
+        )
+    };
+    let (a, b, c) = match first().await {
+        Ok(parts) => parts,
+        Err(error) if error.1.contains("GROUPCALL_JOIN_MISSING") => {
+            joined().lock().await.remove(&id);
+            ensure_join(&app, &id, call.clone()).await?;
+            first().await?
+        }
+        Err(error) => return Err(error),
+    };
+    let downloaded_ms = started.elapsed().as_millis();
     let mut continuity = cache()
         .lock()
         .await
@@ -204,39 +258,19 @@ pub async fn segment(
         .and_then(|(next, state)| (*next == timestamp).then(|| state.clone()))
         .unwrap_or_else(crate::hls_ts::Continuity::new);
     let mut data = Vec::new();
-    for index in 0..(SEGMENT_MS / PART_MS) {
-        let part_time = timestamp + index * PART_MS;
-        let request = tl::functions::upload::GetFile {
-            precise: false,
-            cdn_supported: false,
-            location: tl::enums::InputFileLocation::InputGroupCallStream(
-                tl::types::InputGroupCallStream {
-                    call: call.clone(),
-                    time_ms: part_time,
-                    scale: 0,
-                    video_channel: Some(1),
-                    video_quality: Some(2),
-                },
-            ),
-            offset: 0,
-            limit: 1024 * 1024,
-        };
-        let response = match app.pool.invoke_in_dc(dc, &request).await {
-            Ok(file) => file,
-            Err(error) if error.to_string().contains("GROUPCALL_JOIN_MISSING") => {
-                joined().lock().await.remove(&id);
-                ensure_join(&app, &id, call.clone()).await?;
-                app.pool.invoke_in_dc(dc, &request).await?
-            }
-            Err(error) => return Err(error.into()),
-        };
-        let tl::enums::upload::File::File(file) = response else {
-            return Err(bad("unexpected Telegram stream response"));
-        };
-        let mp4 = crate::stream_part::extract_single_mp4(&file.bytes).map_err(bad)?;
-        let piece = crate::hls_ts::remux(mp4, part_time, &mut continuity).map_err(bad)?;
+    for (index, mp4) in [a, b, c].into_iter().enumerate() {
+        let part_time = timestamp + (index as i64) * PART_MS;
+        let piece = crate::hls_ts::remux(&mp4, part_time, &mut continuity).map_err(bad)?;
         data.extend_from_slice(&piece);
     }
+    eprintln!(
+        "HLS segment chat={} time_ms={} download_ms={} total_ms={} ts_bytes={}",
+        id,
+        timestamp,
+        downloaded_ms,
+        started.elapsed().as_millis(),
+        data.len()
+    );
     let mut guard = cache().lock().await;
     guard
         .continuation
