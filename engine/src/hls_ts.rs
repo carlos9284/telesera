@@ -504,7 +504,9 @@ pub fn remux(mp4: &[u8], segment_ms: i64, state: &mut Continuity) -> RemuxResult
     psi(&mut output, &mut state.cc);
     let mut pcr_written = false;
     for (dts, pts, _track, video, bytes) in events {
-        let pcr = video && !pcr_written;
+        // Keep the PCR clock available to older decoders at video-frame cadence.
+        // With 30fps video this avoids a one-second gap between PCR markers.
+        let pcr = video;
         if pcr {
             pcr_written = true;
         }
