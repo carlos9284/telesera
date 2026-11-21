@@ -73,7 +73,7 @@ pub async fn join_probe(
             muted: true,
             video_stopped: true,
             call: call.clone(),
-            join_as: tl::enums::InputPeer::Self_,
+            join_as: tl::enums::InputPeer::PeerSelf,
             invite_hash: None,
             public_key: None,
             block: None,
