@@ -94,7 +94,7 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
         oldest / 1000
     );
     for ts in (oldest..=newest).step_by(1000) {
-        body.push_str(&format!("#EXTINF:1.000,\n{ts}.ts?token={token}\n"));
+        body.push_str(&format!("#EXTINF:1.000,\nsegment/{ts}?token={token}\n"));
     }
     Ok((
         [
