@@ -66,22 +66,8 @@ pub async fn join_probe(
         return Err(bad("not an active RTMP livestream"));
     }
     let dc = info.stream_dc_id.ok_or_else(|| bad("media DC missing"))?;
-    let (payload, ssrc) = viewer_params()?;
-    let result = app
-        .client
-        .invoke(&tl::functions::phone::JoinGroupCall {
-            muted: true,
-            video_stopped: true,
-            call: call.clone(),
-            join_as: tl::enums::InputPeer::PeerSelf,
-            invite_hash: None,
-            public_key: None,
-            block: None,
-            params: tl::types::DataJson { data: payload }.into(),
-        })
-        .await;
-    match result {
-        Ok(_) => Ok(Json(json!({
+    match join_spectator(&app, call).await {
+        Ok(ssrc) => Ok(Json(json!({
             "status":"viewer_join_accepted",
             "source_id":ssrc,
             "media_dc_id":dc,
@@ -90,8 +76,30 @@ pub async fn join_probe(
         }))),
         Err(error) => Ok(Json(json!({
             "status":"viewer_join_rejected",
-            "telegram_error":error.to_string(),
+            "telegram_error":error.1,
             "mode":"rtmp_spectator"
         }))),
     }
+}
+
+
+/// Join an RTMP stream using a receive-only group-call participant.
+pub async fn join_spectator(
+    app: &Shared,
+    call: tl::enums::InputGroupCall,
+) -> ApiResult<i32> {
+    let (payload, ssrc) = viewer_params()?;
+    app.client
+        .invoke(&tl::functions::phone::JoinGroupCall {
+            muted: true,
+            video_stopped: true,
+            call,
+            join_as: tl::enums::InputPeer::PeerSelf,
+            invite_hash: None,
+            public_key: None,
+            block: None,
+            params: tl::types::DataJson { data: payload }.into(),
+        })
+        .await?;
+    Ok(ssrc)
 }
