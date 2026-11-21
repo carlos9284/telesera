@@ -10,16 +10,24 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn u32(&mut self) -> Result<u32, &'static str> {
-        let bytes = self.input.get(self.offset..self.offset + 4).ok_or("short integer")?;
+        let bytes = self
+            .input
+            .get(self.offset..self.offset + 4)
+            .ok_or("short integer")?;
         self.offset += 4;
-        Ok(u32::from_le_bytes(bytes.try_into().map_err(|_| "invalid integer")?))
+        Ok(u32::from_le_bytes(
+            bytes.try_into().map_err(|_| "invalid integer")?,
+        ))
     }
 
     fn tl_string(&mut self) -> Result<String, &'static str> {
         let prefix = *self.input.get(self.offset).ok_or("short TL string")?;
         self.offset += 1;
         let (len, padding) = if prefix == 254 {
-            let b = self.input.get(self.offset..self.offset + 3).ok_or("short TL string length")?;
+            let b = self
+                .input
+                .get(self.offset..self.offset + 3)
+                .ok_or("short TL string length")?;
             self.offset += 3;
             let len = usize::from(b[0]) | (usize::from(b[1]) << 8) | (usize::from(b[2]) << 16);
             (len, (4 - len % 4) % 4)
@@ -29,9 +37,17 @@ impl<'a> Reader<'a> {
         } else {
             return Err("invalid TL string prefix");
         };
-        let end = self.offset.checked_add(len).ok_or("string length overflow")?;
-        let value = self.input.get(self.offset..end).ok_or("short TL string bytes")?;
-        let value = std::str::from_utf8(value).map_err(|_| "non-UTF8 TL string")?.to_owned();
+        let end = self
+            .offset
+            .checked_add(len)
+            .ok_or("string length overflow")?;
+        let value = self
+            .input
+            .get(self.offset..end)
+            .ok_or("short TL string bytes")?;
+        let value = std::str::from_utf8(value)
+            .map_err(|_| "non-UTF8 TL string")?
+            .to_owned();
         self.offset = end.checked_add(padding).ok_or("padding overflow")?;
         if self.offset > self.input.len() {
             return Err("short TL string padding");
@@ -65,7 +81,10 @@ pub fn inspect(bytes: &[u8]) -> Result<Value, &'static str> {
     let payload = bytes.get(r.offset..).ok_or("missing media payload")?;
     let mut parts = Vec::new();
     for (index, &(start, rotation, extra)) in events.iter().enumerate() {
-        let end = events.get(index + 1).map(|event| event.0).unwrap_or(payload.len());
+        let end = events
+            .get(index + 1)
+            .map(|event| event.0)
+            .unwrap_or(payload.len());
         if end <= start || end > payload.len() {
             return Err("invalid media part offsets");
         }
