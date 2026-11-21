@@ -107,3 +107,39 @@ pub fn inspect(bytes: &[u8]) -> Result<Value, &'static str> {
         "parts":parts,
     }))
 }
+
+
+/// Extract a single MP4 portion from a Telegram live-stream reply.
+/// This intentionally rejects multi-part replies until their boundaries
+/// are explicitly handled, rather than returning an incorrectly merged MP4.
+pub fn extract_single_mp4(bytes: &[u8]) -> Result<&[u8], &'static str> {
+    let mut r = Reader {
+        input: bytes,
+        offset: 0,
+    };
+    if r.u32()? != 0xa12e810d {
+        return Err("unrecognized livestream segment magic");
+    }
+    if r.tl_string()? != "mp4" {
+        return Err("livestream container is not mp4");
+    }
+    let _active_mask = r.u32()?;
+    if r.u32()? != 1 {
+        return Err("multiple media parts are not supported by this diagnostic");
+    }
+    if r.u32()? != 0 {
+        return Err("first media part has a nonzero offset");
+    }
+    let _endpoint_id = r.tl_string()?;
+    let _rotation = r.u32()?;
+    let _extra = r.u32()?;
+    let mp4 = bytes.get(r.offset..).ok_or("missing mp4 payload")?;
+    if mp4.len() < 12 || &mp4[4..8] != b"ftyp" {
+        return Err("mp4 does not begin with a valid ftyp box");
+    }
+    let box_size = u32::from_be_bytes(mp4[..4].try_into().map_err(|_| "invalid ftyp size")?);
+    if box_size < 8 || usize::try_from(box_size).map_err(|_| "invalid ftyp size")? > mp4.len() {
+        return Err("invalid ftyp box length");
+    }
+    Ok(mp4)
+}
