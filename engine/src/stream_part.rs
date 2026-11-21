@@ -108,7 +108,6 @@ pub fn inspect(bytes: &[u8]) -> Result<Value, &'static str> {
     }))
 }
 
-
 /// Extract a single MP4 portion from a Telegram live-stream reply.
 /// This intentionally rejects multi-part replies until their boundaries
 /// are explicitly handled, rather than returning an incorrectly merged MP4.
