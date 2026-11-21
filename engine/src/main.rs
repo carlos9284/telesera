@@ -53,6 +53,7 @@ struct Auth {
 }
 struct App {
     client: Client,
+    pool: grammers_client::sender::SenderPoolFatHandle,
     session: Arc<session::FileSession>,
     config: Config,
     auth: Mutex<Auth>,
@@ -117,6 +118,7 @@ async fn main() -> anyhow::Result<()> {
     let ui = config.ui_dir.clone();
     let state = Arc::new(App {
         client,
+        pool: pool.handle.clone(),
         session,
         config,
         auth: Mutex::new(Auth::default()),
@@ -141,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/chats/resolve", get(telegram::resolve))
         .route("/api/chats/{id}/messages", get(telegram::messages))
         .route("/api/chats/{id}/live", get(live::status))
+        .route("/api/chats/{id}/live/probe", post(live::probe))
         .route("/api/chats/{id}/send", post(telegram::send))
         .route("/api/chats/{id}/photo", get(media::photo))
         .route(
