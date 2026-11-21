@@ -1,4 +1,6 @@
+mod hls_ts;
 mod live;
+mod live_hls;
 mod media;
 mod network;
 mod session;
@@ -150,6 +152,8 @@ async fn main() -> anyhow::Result<()> {
             post(live::segment_probe),
         )
         .route("/api/chats/{id}/live/mp4-sample", post(live::mp4_sample))
+        .route("/api/chats/{id}/live/hls/index.m3u8", get(live_hls::playlist))
+        .route("/api/chats/{id}/live/hls/{time}.ts", get(live_hls::segment))
         .route("/api/chats/{id}/send", post(telegram::send))
         .route("/api/chats/{id}/photo", get(media::photo))
         .route(
@@ -206,9 +210,10 @@ async fn security(State(app): State<Shared>, req: Request, next: Next) -> Respon
             .get(header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
             .and_then(|s| s.strip_prefix("Bearer "));
-        let resource = ["/media", "/photo", "/thumbnail"]
-            .iter()
-            .any(|suffix| req.uri().path().ends_with(suffix));
+        let resource = req.uri().path().contains("/live/hls/")
+            || ["/media", "/photo", "/thumbnail"]
+                .iter()
+                .any(|suffix| req.uri().path().ends_with(suffix));
         let query = if resource {
             url::form_urlencoded::parse(req.uri().query().unwrap_or("").as_bytes())
                 .find(|(k, _)| k == "token")
