@@ -161,6 +161,19 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
         .into_response())
 }
 
+async fn fetch_three(
+    app: &Shared,
+    call: tl::enums::InputGroupCall,
+    dc: i32,
+    timestamp: i64,
+) -> ApiResult<(Vec<u8>, Vec<u8>, Vec<u8>)> {
+    tokio::try_join!(
+        fetch_piece(app, call.clone(), dc, timestamp),
+        fetch_piece(app, call.clone(), dc, timestamp + PART_MS),
+        fetch_piece(app, call, dc, timestamp + 2 * PART_MS)
+    )
+}
+
 async fn fetch_piece(
     app: &Shared,
     call: tl::enums::InputGroupCall,
@@ -232,19 +245,12 @@ pub async fn segment(
     // Telegram exposes independent one-second MP4 fragments. Fetch all three
     // concurrently to stay ahead of the LG player's three-second deadline.
     let started = std::time::Instant::now();
-    let first = || {
-        tokio::try_join!(
-            fetch_piece(&app, call.clone(), dc, timestamp),
-            fetch_piece(&app, call.clone(), dc, timestamp + PART_MS),
-            fetch_piece(&app, call.clone(), dc, timestamp + 2 * PART_MS)
-        )
-    };
-    let (a, b, c) = match first().await {
+    let (a, b, c) = match fetch_three(&app, call.clone(), dc, timestamp).await {
         Ok(parts) => parts,
         Err(error) if error.1.contains("GROUPCALL_JOIN_MISSING") => {
             joined().lock().await.remove(&id);
             ensure_join(&app, &id, call.clone()).await?;
-            first().await?
+            fetch_three(&app, call, dc, timestamp).await?
         }
         Err(error) => return Err(error),
     };
