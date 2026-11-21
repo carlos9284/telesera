@@ -52,11 +52,7 @@ fn joined() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
 
 /// Only one join per channel and engine instance. A request failing with
 /// GROUPCALL_JOIN_MISSING explicitly invalidates this optimistic state.
-async fn ensure_join(
-    app: &Shared,
-    id: &str,
-    call: tl::enums::InputGroupCall,
-) -> ApiResult<()> {
+async fn ensure_join(app: &Shared, id: &str, call: tl::enums::InputGroupCall) -> ApiResult<()> {
     let mut guard = joined().lock().await;
     if guard.contains(id) {
         return Ok(());
