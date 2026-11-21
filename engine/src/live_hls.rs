@@ -54,6 +54,10 @@ fn build_lock() -> &'static tokio::sync::Mutex<()> {
     BUILD_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 static JOINED: OnceLock<tokio::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+static PREFETCHING: OnceLock<tokio::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+fn prefetching() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
+    PREFETCHING.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashSet::new()))
+}
 fn joined() -> &'static tokio::sync::Mutex<std::collections::HashSet<String>> {
     JOINED.get_or_init(|| tokio::sync::Mutex::new(std::collections::HashSet::new()))
 }
@@ -149,26 +153,36 @@ pub async fn playlist(State(app): State<Shared>, Path(id): Path<String>) -> ApiR
     for ts in (oldest..=newest).step_by(SEGMENT_MS as usize) {
         body.push_str(&format!("#EXTINF:3.000,\nsegment/{ts}?token={token}\n"));
     }
-    // LG webOS sometimes requests the oldest advertised pieces 30+ seconds
-    // later. Save the at-risk segments while Telegram still has them.
-    // This runs after preparing the playlist and never holds up its response.
-    let prefetch_app = app.clone();
-    let prefetch_id = id.clone();
-    tokio::spawn(async move {
-        for ts in [oldest, oldest + SEGMENT_MS] {
-            if cache().lock().await.get(&prefetch_id, ts).is_some() {
-                continue;
+    // Only one background prefetch pass per channel at once. Previous
+    // versions queued a new task at every refresh and eventually tried to
+    // download Telegram fragments that had expired while waiting for the lock.
+    if prefetching().lock().await.insert(id.clone()) {
+        let prefetch_app = app.clone();
+        let prefetch_id = id.clone();
+        tokio::spawn(async move {
+            // Cache all five advertised segments (15 seconds) for LG players
+            // that fall 30+ seconds behind before asking for an old fragment.
+            for ts in (oldest..=newest).step_by(SEGMENT_MS as usize) {
+                if cache().lock().await.get(&prefetch_id, ts).is_some() {
+                    continue;
+                }
+                // Avoid a request that is already too old when the worker
+                // reaches it; Telegram retains only a short live window.
+                if ts < selected - 27_000 {
+                    continue;
+                }
+                let result = segment(
+                    State(prefetch_app.clone()),
+                    Path((prefetch_id.clone(), ts.to_string())),
+                )
+                .await;
+                if result.is_err() {
+                    eprintln!("HLS prefetch failed chat={} time_ms={}", prefetch_id, ts);
+                }
             }
-            let result = segment(
-                State(prefetch_app.clone()),
-                Path((prefetch_id.clone(), ts.to_string())),
-            )
-            .await;
-            if result.is_err() {
-                eprintln!("HLS prefetch failed chat={} time_ms={}", prefetch_id, ts);
-            }
-        }
-    });
+            prefetching().lock().await.remove(&prefetch_id);
+        });
+    }
     Ok((
         [
             (
